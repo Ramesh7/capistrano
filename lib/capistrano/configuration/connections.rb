@@ -191,18 +191,22 @@ module Capistrano
 
         # establish connections to those servers in groups of max_hosts, as necessary
         servers.each_slice(max_hosts) do |servers_slice|
+          retry_count = 0
           begin
             establish_connections_to(servers_slice)
+            yield servers_slice
           rescue ConnectionError => error
             raise error unless task && task.continue_on_error?
             error.hosts.each do |h|
               servers_slice.delete(h)
               failed!(h)
             end
-          end
-
-          begin
-            yield servers_slice
+          rescue Net::SSH::Disconnect
+            raise "Error : connection closed by remote host (Net::SSH::Disconnect)" if retry_count >= options[:retry].to_i
+            teardown_connections_to(servers_slice)
+            logger.trace "Connection closed by remote host, retrying command by establish new connection..."
+            retry_count += 1
+            retry
           rescue RemoteError => error
             raise error unless task && task.continue_on_error?
             error.hosts.each { |h| failed!(h) }
